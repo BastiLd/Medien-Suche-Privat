@@ -241,6 +241,7 @@ export class MediaDatabase {
   getSettings(): AppSettings {
     return {
       tmdbKey: this.getSetting('tmdbKey'),
+      matchStrictness: parseNumberSetting(this.getSetting('matchStrictness'), 86),
       collections: parseJsonArray(this.getSetting('collections')),
       manualAliases: parseJsonArray(this.getSetting('manualAliases'))
     };
@@ -248,6 +249,7 @@ export class MediaDatabase {
 
   saveSettings(settings: AppSettings): AppSettings {
     this.setSetting('tmdbKey', settings.tmdbKey.trim());
+    this.setSetting('matchStrictness', String(clampNumber(settings.matchStrictness, 0, 100)));
     this.setSetting('collections', JSON.stringify(settings.collections ?? []));
     this.setSetting('manualAliases', JSON.stringify(settings.manualAliases ?? []));
     return this.getSettings();
@@ -415,6 +417,15 @@ function parseJsonArray(value: string) {
   } catch {
     return [];
   }
+}
+
+function parseNumberSetting(value: string, fallback: number): number {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function clampNumber(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, Math.round(value)));
 }
 
 async function loadSqlJs(): Promise<SqlJsStatic> {

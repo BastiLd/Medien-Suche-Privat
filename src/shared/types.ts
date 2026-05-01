@@ -116,6 +116,7 @@ export interface ScanProgress {
 
 export interface AppSettings {
   tmdbKey: string;
+  matchStrictness: number;
   collections: SavedCollection[];
   manualAliases: ManualAlias[];
 }

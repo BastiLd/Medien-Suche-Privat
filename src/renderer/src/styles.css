@@ -500,6 +500,16 @@ textarea:focus {
   white-space: nowrap;
 }
 
+.strictness-chip {
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: #f2ebdc;
+}
+
+.strictness-chip strong {
+  color: #2f2b24;
+}
+
 .tmdb-status,
 .field,
 .export-box {
@@ -658,6 +668,52 @@ textarea {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 12px;
+}
+
+.result-snapshot {
+  display: grid;
+  grid-template-columns: minmax(220px, 0.35fr) minmax(0, 1fr);
+  gap: 14px;
+  padding: 14px;
+  border: 1px solid rgba(39, 37, 32, 0.12);
+  border-radius: 8px;
+  background: #fffdf8;
+}
+
+.result-snapshot strong,
+.result-snapshot span {
+  display: block;
+}
+
+.result-snapshot > div > span {
+  margin-top: 4px;
+  color: #6d675d;
+  font-size: 13px;
+}
+
+.snapshot-list {
+  display: grid;
+  gap: 8px;
+}
+
+.snapshot-list span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 8px 10px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.snapshot-list .found {
+  color: #12382a;
+  background: #d9efe5;
+}
+
+.snapshot-list .missing {
+  color: #633023;
+  background: #f5ded8;
 }
 
 .everything-table {
@@ -861,8 +917,9 @@ textarea {
 .context-menu {
   position: fixed;
   z-index: 20;
-  min-width: 230px;
-  padding: 6px;
+  width: 246px;
+  max-width: calc(100vw - 24px);
+  padding: 5px;
   border: 1px solid rgba(39, 37, 32, 0.18);
   border-radius: 8px;
   background: #fffdf8;
@@ -871,10 +928,13 @@ textarea {
 
 .context-menu button {
   width: 100%;
+  min-height: 32px;
   justify-content: flex-start;
-  padding: 0 10px;
+  padding: 0 9px;
   color: #272520;
   background: transparent;
+  font-size: 13px;
+  white-space: nowrap;
 }
 
 .context-menu button:hover {
@@ -886,6 +946,49 @@ textarea {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
   gap: 10px;
+}
+
+.strictness-panel {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid rgba(39, 37, 32, 0.12);
+  border-radius: 8px;
+  background: #fffdf8;
+}
+
+.strictness-panel strong,
+.strictness-panel span {
+  display: block;
+}
+
+.strictness-panel span,
+.range-labels {
+  color: #6d675d;
+  font-size: 13px;
+}
+
+.strictness-value {
+  align-self: start;
+  padding: 6px 10px;
+  border-radius: 8px;
+  color: #12382a;
+  background: #c9eadb;
+  font-weight: 900;
+}
+
+.strictness-panel input[type='range'] {
+  grid-column: 1 / -1;
+  padding: 0;
+  accent-color: #e35f37;
+}
+
+.range-labels {
+  grid-column: 1 / -1;
+  display: flex;
+  justify-content: space-between;
+  font-weight: 800;
 }
 
 .health-card,
@@ -1041,6 +1144,10 @@ textarea {
 
   .result-summary-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .result-snapshot {
+    grid-template-columns: 1fr;
   }
 
   .tmdb-panel {

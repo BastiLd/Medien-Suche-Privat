@@ -35,7 +35,7 @@ import type {
 } from '../../shared/types';
 
 type View = 'search' | 'results' | 'settings';
-type SettingsTab = 'sources' | 'tmdb' | 'index' | 'extras';
+type SettingsTab = 'sources' | 'search' | 'tmdb' | 'index' | 'extras';
 type TmdbStatus = 'active' | 'missing' | 'invalid' | 'offline';
 
 const sourceKindLabels: Record<SourceKind, string> = {
@@ -63,6 +63,7 @@ const initialStatus: IndexStatus = {
 
 const initialSettings: AppSettings = {
   tmdbKey: '',
+  matchStrictness: 86,
   collections: [],
   manualAliases: []
 };
@@ -394,6 +395,7 @@ export function App(): JSX.Element {
               setMessage(files.length === 1 ? `${files[0].name} geladen.` : `${files.length} TXT-Dateien geladen.`);
             }}
             stats={resultStats}
+            strictness={settings.matchStrictness}
           />
         )}
 
@@ -460,7 +462,8 @@ function SearchView({
   isSearching,
   runSearch,
   handleDrop,
-  stats
+  stats,
+  strictness
 }: {
   query: string;
   setQuery: (value: string | ((current: string) => string)) => void;
@@ -474,6 +477,7 @@ function SearchView({
   runSearch: () => void;
   handleDrop: (event: React.DragEvent<HTMLDivElement>) => void;
   stats: { plex: number; local: number; missing: number; duplicates: number };
+  strictness: number;
 }): JSX.Element {
   return (
     <>
@@ -481,6 +485,10 @@ function SearchView({
         <div>
           <strong>TMDb: {tmdbStatusLabel(tmdbStatus)}</strong>
           <span>Der Key wird automatisch gespeichert. Mit TMDb werden alternative und deutsche Titel genutzt.</span>
+        </div>
+        <div className="strictness-chip">
+          <strong>Strenge {strictness}%</strong>
+          <span>{strictnessLabel(strictness)}</span>
         </div>
         <label className="toggle">
           <input
@@ -557,6 +565,7 @@ function ResultsView({
   const foundCount = results.filter((result) => result.status !== 'missing').length;
   const totalMatches = results.reduce((sum, result) => sum + result.plexMatches.length + result.localMatches.length, 0);
   const duplicateTitles = results.filter((result) => result.duplicates.length > 0).length;
+  const foundTitles = results.filter((result) => result.status !== 'missing').map((result) => result.query.raw);
 
   return (
     <>
@@ -565,6 +574,17 @@ function ResultsView({
         <Stat label="Fehlt" value={missingTitles.length} tone="bad" />
         <Stat label="Treffer" value={totalMatches} tone="info" />
         <Stat label="Duplikate" value={duplicateTitles} tone="warn" />
+      </section>
+
+      <section className="result-snapshot">
+        <div>
+          <strong>Schnellüberblick</strong>
+          <span>{foundCount} gefunden, {missingTitles.length} fehlen, {totalMatches} Treffer insgesamt</span>
+        </div>
+        <div className="snapshot-list">
+          <span className="found">Gefunden: {foundTitles.slice(0, 6).join(', ') || '-'}</span>
+          <span className="missing">Fehlt: {missingTitles.slice(0, 8).join(', ') || '-'}</span>
+        </div>
       </section>
 
       <section className="result-toolbar">
@@ -744,7 +764,7 @@ function SettingsView(props: {
   return (
     <>
       <div className="settings-tabs">
-        {(['sources', 'tmdb', 'index', 'extras'] as SettingsTab[]).map((tab) => (
+        {(['sources', 'search', 'tmdb', 'index', 'extras'] as SettingsTab[]).map((tab) => (
           <button
             key={tab}
             className={props.settingsTab === tab ? 'active' : ''}
@@ -757,10 +777,42 @@ function SettingsView(props: {
       </div>
 
       {props.settingsTab === 'sources' && <SourceSettings {...props} />}
+      {props.settingsTab === 'search' && <SearchSettings {...props} />}
       {props.settingsTab === 'tmdb' && <TmdbSettings {...props} />}
       {props.settingsTab === 'index' && <IndexSettings {...props} />}
       {props.settingsTab === 'extras' && <ExtrasSettings {...props} />}
     </>
+  );
+}
+
+function SearchSettings({ settings, setSettings }: Parameters<typeof SettingsView>[0]): JSX.Element {
+  return (
+    <section className="settings-panel narrow">
+      <div className="strictness-panel">
+        <div>
+          <strong>Treffer-Strenge</strong>
+          <span>{strictnessLabel(settings.matchStrictness)}</span>
+        </div>
+        <div className="strictness-value">{settings.matchStrictness}%</div>
+        <input
+          type="range"
+          min={0}
+          max={100}
+          step={1}
+          value={settings.matchStrictness}
+          onChange={(event) => setSettings((current) => ({ ...current, matchStrictness: Number(event.target.value) }))}
+        />
+        <div className="range-labels">
+          <span>Locker</span>
+          <span>Ausgewogen</span>
+          <span>Sehr streng</span>
+        </div>
+      </div>
+      <div className="export-box">
+        <strong>Empfehlung</strong>
+        <span>Für deine Marvel-Listen ist 85-95 gut. Wenn echte Treffer fehlen, kurz auf 70-80 runterstellen und erneut suchen.</span>
+      </div>
+    </section>
   );
 }
 
@@ -1033,7 +1085,15 @@ function viewTitle(view: View): string {
 }
 
 function settingsTabLabel(tab: SettingsTab): string {
-  return tab === 'sources' ? 'Suchorte' : tab === 'tmdb' ? 'TMDb' : tab === 'index' ? 'Index' : 'Extras';
+  return tab === 'sources'
+    ? 'Suchorte'
+    : tab === 'search'
+      ? 'Suche'
+      : tab === 'tmdb'
+        ? 'TMDb'
+        : tab === 'index'
+          ? 'Index'
+          : 'Extras';
 }
 
 function tmdbStatusLabel(status: TmdbStatus): string {
@@ -1073,4 +1133,16 @@ function scoreTone(score: number): string {
   }
 
   return 'muted';
+}
+
+function strictnessLabel(value: number): string {
+  if (value >= 85) {
+    return 'Sehr streng: nur klare Titel-Treffer';
+  }
+
+  if (value >= 60) {
+    return 'Ausgewogen: gute Titel plus wenige Fuzzy-Treffer';
+  }
+
+  return 'Locker: mehr Treffer, aber mehr falsche Treffer möglich';
 }

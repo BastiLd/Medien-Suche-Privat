@@ -24,8 +24,17 @@ interface SearchContext {
   allItems: MediaItem[];
 }
 
-const MAX_VISIBLE_MATCHES = 18;
-const MAX_FUSE_CANDIDATES = 36;
+interface MatchTuning {
+  strictness: number;
+  fuseThreshold: number;
+  fileScore: number;
+  folderScore: number;
+  tokenOverlap: number;
+  variantOverlap: number;
+  maxMatches: number;
+  maxCandidates: number;
+}
+
 const GENERIC_FOLDER_NAMES = new Set([
   'bonus',
   'deleted scene',
@@ -73,19 +82,20 @@ export async function searchMedia(
   context: SearchContext
 ): Promise<SearchResult[]> {
   const queries = parseInputList(request.text).map(parseMediaName);
-  const activeFuse = createFuse(activeItems);
+  const tuning = createMatchTuning(settings.matchStrictness);
+  const activeFuse = createFuse(activeItems, tuning);
   const activeSourceIds = new Set(context.activeSources.map((source) => source.id));
   const inactiveItems = context.allItems.filter((item) => !activeSourceIds.has(item.sourceId));
-  const inactiveFuse = createFuse(inactiveItems);
+  const inactiveFuse = createFuse(inactiveItems, tuning);
   const results: SearchResult[] = [];
 
   for (const query of queries) {
     const tmdb =
       request.useTmdb && settings.tmdbKey ? await searchTmdb(query, settings.tmdbKey) : null;
-    const variants = buildSearchVariants(query, tmdb, settings);
-    const candidateHits = findMatches(query, variants, activeFuse);
-    const inactiveMatches = findMatches(query, variants, inactiveFuse).slice(0, 8);
-    const uniqueHits = dedupeByPath(candidateHits).slice(0, MAX_VISIBLE_MATCHES);
+    const variants = buildSearchVariants(query, tmdb, settings, tuning);
+    const candidateHits = findMatches(query, variants, activeFuse, tuning);
+    const inactiveMatches = findMatches(query, variants, inactiveFuse, tuning).slice(0, 8);
+    const uniqueHits = dedupeByPath(candidateHits).slice(0, tuning.maxMatches);
     const plexMatches = uniqueHits.filter((hit) => hit.item.sourceKind === 'plex');
     const localMatches = uniqueHits.filter((hit) => hit.item.sourceKind !== 'plex');
     const duplicates = findDuplicates(uniqueHits);
@@ -105,7 +115,7 @@ export async function searchMedia(
           : null,
       variants,
       inactiveMatches,
-      closestMatches: status === 'missing' ? findClosest(query, activeFuse) : [],
+      closestMatches: status === 'missing' ? findClosest(query, activeFuse, tuning) : [],
       tmdb
     });
   }
@@ -113,10 +123,10 @@ export async function searchMedia(
   return results;
 }
 
-function createFuse(items: MediaItem[]): Fuse<MediaItem> {
+function createFuse(items: MediaItem[], tuning: MatchTuning): Fuse<MediaItem> {
   return new Fuse(items, {
     includeScore: true,
-    threshold: 0.38,
+    threshold: tuning.fuseThreshold,
     ignoreLocation: true,
     keys: [
       { name: 'titleNorm', weight: 0.9 },
@@ -125,7 +135,12 @@ function createFuse(items: MediaItem[]): Fuse<MediaItem> {
   });
 }
 
-function buildSearchVariants(query: ParsedQuery, tmdb: TmdbMetadata | null, settings: AppSettings): string[] {
+function buildSearchVariants(
+  query: ParsedQuery,
+  tmdb: TmdbMetadata | null,
+  settings: AppSettings,
+  tuning: MatchTuning
+): string[] {
   const variants = new Set<string>();
 
   for (const variant of buildLocalTitleVariants(query.title)) {
@@ -157,10 +172,10 @@ function buildSearchVariants(query: ParsedQuery, tmdb: TmdbMetadata | null, sett
   return [...variants]
     .map((variant) => variant.trim())
     .filter(Boolean)
-    .filter((variant) => isMeaningfulVariant(query, normalizeTitle(variant)));
+    .filter((variant) => isMeaningfulVariant(query, normalizeTitle(variant), tuning));
 }
 
-function findMatches(query: ParsedQuery, variants: string[], fuse: Fuse<MediaItem>): MatchHit[] {
+function findMatches(query: ParsedQuery, variants: string[], fuse: Fuse<MediaItem>, tuning: MatchTuning): MatchHit[] {
   const hits = new Map<string, MatchHit>();
   const queryNorm = query.titleNorm;
   const queryTokens = tokens(queryNorm);
@@ -171,7 +186,7 @@ function findMatches(query: ParsedQuery, variants: string[], fuse: Fuse<MediaIte
       continue;
     }
 
-    const entries = fuse.search(variantNorm).slice(0, MAX_FUSE_CANDIDATES);
+    const entries = fuse.search(variantNorm).slice(0, tuning.maxCandidates);
 
     for (const entry of entries) {
       const item = entry.item;
@@ -179,7 +194,7 @@ function findMatches(query: ParsedQuery, variants: string[], fuse: Fuse<MediaIte
       const titleScore = Math.max(fuseScore, similarity(variantNorm, item.titleNorm));
       const directMatch = isDirectTitleMatch(item.titleNorm, variantNorm);
 
-      if (!isUsefulMatch(query, item, variantNorm, titleScore, directMatch, queryTokens)) {
+      if (!isUsefulMatch(query, item, variantNorm, titleScore, directMatch, queryTokens, tuning)) {
         continue;
       }
 
@@ -201,10 +216,11 @@ function findMatches(query: ParsedQuery, variants: string[], fuse: Fuse<MediaIte
   return [...hits.values()].sort(compareHits);
 }
 
-function findClosest(query: ParsedQuery, fuse: Fuse<MediaItem>): MatchHit[] {
+function findClosest(query: ParsedQuery, fuse: Fuse<MediaItem>, tuning: MatchTuning): MatchHit[] {
   return fuse
     .search(query.titleNorm || query.title)
-    .slice(0, 5)
+    .filter((entry) => Math.max(0, 1 - (entry.score ?? 1)) >= Math.max(0.58, tuning.fileScore - 0.18))
+    .slice(0, 3)
     .map((entry) => ({
       item: entry.item,
       score: Math.max(0, 1 - (entry.score ?? 1)),
@@ -219,7 +235,8 @@ function isUsefulMatch(
   variantNorm: string,
   titleScore: number,
   directMatch: boolean,
-  queryTokens: string[]
+  queryTokens: string[],
+  tuning: MatchTuning
 ): boolean {
   if (!query.titleNorm || !item.titleNorm) {
     return false;
@@ -244,11 +261,18 @@ function isUsefulMatch(
   const itemTokens = tokens(item.titleNorm);
   const overlap = tokenOverlap(queryTokens, itemTokens);
   const variantTokens = tokens(variantNorm);
+  const variantOverlap = tokenOverlap(queryTokens, variantTokens);
   const oneWordQuery = queryTokens.length === 1;
   const hasExactQueryToken = oneWordQuery && itemTokens.includes(queryTokens[0]);
   const isFolder = item.itemType === 'folder';
-  const strongEnoughForFolder = directMatch || (titleScore >= 0.86 && overlap >= 0.75);
-  const strongEnoughForFile = directMatch || (titleScore >= 0.66 && overlap >= 0.55);
+  const firstPartAlias = query.titleNorm === `${variantNorm} 1`;
+  const variantIsBroadAlias = variantNorm !== query.titleNorm && !firstPartAlias && variantOverlap < tuning.variantOverlap;
+  const strongEnoughForFolder = directMatch || (titleScore >= tuning.folderScore && overlap >= tuning.tokenOverlap + 0.12);
+  const strongEnoughForFile = directMatch || (titleScore >= tuning.fileScore && overlap >= tuning.tokenOverlap);
+
+  if (variantIsBroadAlias) {
+    return false;
+  }
 
   if (isFolder && !strongEnoughForFolder) {
     return false;
@@ -266,7 +290,11 @@ function isUsefulMatch(
     return false;
   }
 
-  if (query.mediaType === 'movie' && item.mediaType === 'series' && !directMatch && overlap < 0.85) {
+  if (directMatch && variantNorm !== query.titleNorm && !firstPartAlias && overlap < tuning.tokenOverlap) {
+    return false;
+  }
+
+  if (query.mediaType === 'movie' && item.mediaType === 'series' && !directMatch && overlap < 0.92) {
     return false;
   }
 
@@ -353,7 +381,7 @@ function findDuplicates(hits: MatchHit[]): MatchHit[] {
     .sort(compareHits);
 }
 
-function isMeaningfulVariant(query: ParsedQuery, variantNorm: string): boolean {
+function isMeaningfulVariant(query: ParsedQuery, variantNorm: string, tuning: MatchTuning): boolean {
   if (!variantNorm) {
     return false;
   }
@@ -365,8 +393,20 @@ function isMeaningfulVariant(query: ParsedQuery, variantNorm: string): boolean {
     return false;
   }
 
+  if (queryTokens.length === 1) {
+    return variantTokens.includes(queryTokens[0]);
+  }
+
   if (variantTokens.length === 1 && queryTokens.length > 1) {
     return query.titleNorm === `${variantNorm} 1`;
+  }
+
+  if (queryTokens.length >= 4 && variantTokens.length < 3) {
+    return variantTokens.some((token) => queryTokens.slice(-2).includes(token));
+  }
+
+  if (tokenOverlap(queryTokens, variantTokens) < tuning.variantOverlap) {
+    return false;
   }
 
   return true;
@@ -416,4 +456,20 @@ function compareHits(a: MatchHit, b: MatchHit): number {
   const fileBonusA = a.item.itemType === 'file' ? 0.03 : 0;
   const fileBonusB = b.item.itemType === 'file' ? 0.03 : 0;
   return b.score + fileBonusB - (a.score + fileBonusA);
+}
+
+function createMatchTuning(value: number | undefined): MatchTuning {
+  const strictness = Math.min(100, Math.max(0, Number.isFinite(value) ? Number(value) : 86));
+  const ratio = strictness / 100;
+
+  return {
+    strictness,
+    fuseThreshold: 0.46 - ratio * 0.24,
+    fileScore: 0.6 + ratio * 0.22,
+    folderScore: 0.78 + ratio * 0.16,
+    tokenOverlap: 0.5 + ratio * 0.32,
+    variantOverlap: 0.45 + ratio * 0.28,
+    maxMatches: strictness >= 80 ? 8 : strictness >= 55 ? 14 : 22,
+    maxCandidates: strictness >= 80 ? 20 : strictness >= 55 ? 32 : 46
+  };
 }
